@@ -1,0 +1,27 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+
+# Environment variables file
+.env
+
+# Distribution / packaging
+dist/
+
+# Logs
+logs/
+*.log
+
+# IDEs and editors
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+*.code-workspace
+# Python virtual environments
+venv/
+env/
+.venv/
+.env/
+env/.bak/
+venv.bak/
+
