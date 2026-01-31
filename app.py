@@ -4,6 +4,7 @@ import plotly.express as px
 import time
 import random
 from rag_agent import EVSmartFactoryAgent # Import our custom agent class
+from slide_generator import SlideGenerator # For slide generation features
 
 # === Page Configuration ===
 st.set_page_config(
@@ -75,8 +76,8 @@ with st.sidebar:
 
 # === 3. Main Dashboard Interface ===
 
-st.title("⚡ Giga's EV Factory: AI-based Analytics Dashboard")
-st.markdown("### Agentic RAG Reporting System")
+st.title("⚡ Giga's EV Factory: AI-based Analytics System")
+st.markdown("### Agentic RAG Reporting & Live Dashboard")
 
 # Tab Layout: Chat Interface vs. Visual Dashboard
 tab1, tab2 = st.tabs(["🤖 AI Analyst & Reporting (Chat)", "📊 Live Dashboard (Visuals)"])
@@ -91,6 +92,14 @@ with tab1:
         # Initialize chat history in session state
         if "messages" not in st.session_state:
             st.session_state.messages = []
+
+        # Initialize state for last response details (to survive reruns)
+        if "last_response_content" not in st.session_state:
+            st.session_state.last_response_content = None
+        if "last_log_context" not in st.session_state:
+            st.session_state.last_log_context = None
+        if "last_csv_context" not in st.session_state:
+            st.session_state.last_csv_context = None
 
         # Display chat history
         for message in st.session_state.messages:
@@ -162,25 +171,68 @@ with tab1:
                         # Save full response to history
                         st.session_state.messages.append({"role": "assistant", "content": full_response})
 
-                        # Source viewer for debugging (optional)
-                        with st.expander("🔍 View Retrieved Context (Debug)"):
-                            tab_log, tab_csv = st.tabs(["📄 RAG Logs (Unstructured)", "📊 CSV Stats (Structured)"])
+                        # Save context to Session State so it survives button clicks
+                        st.session_state.last_response_content = full_response
+                        st.session_state.last_log_context = agent.last_log_context
+                        st.session_state.last_csv_context = agent.last_csv_context
 
-                            with tab_log:
-                                # 顯示 Agent 剛剛抓到的 Log 片段
-                                st.code(agent.last_log_context, language="text")
-                                if "No logs available" in agent.last_log_context:
-                                    st.caption("⚠️ No relevant logs found for this query.")
-                                else:
-                                    st.caption("✅ Dynamic content retrieved from LlamaIndex.")
-
-                            with tab_csv:
-                                # 顯示 CSV 統計摘要
-                                st.text(agent.last_csv_context)
-                                st.caption("✅ Static context from Pandas DataFrames.")
+                        # Reset slide URL on new query
+                        if 'slide_url' in st.session_state:
+                            del st.session_state['slide_url']
 
                 except Exception as e:
                     st.error(f"Error generating response: {e}")
+
+    if st.session_state.last_response_content:
+        with col_center:
+            st.markdown("---")
+
+            # Source viewer for debugging (optional)
+            with st.expander("🔍 View Retrieved Context (Debug)"):
+                tab_log, tab_csv = st.tabs(["📄 RAG Logs (Unstructured)", "📊 CSV Stats (Structured)"])
+
+                with tab_log:
+                    # Displays a log snippet that the Agent just captured.
+                    st.code(agent.last_log_context, language="text")
+                    if "No logs available" in agent.last_log_context:
+                        st.caption("⚠️ No relevant logs found for this query.")
+                    else:
+                        st.caption("✅ Dynamic content retrieved from LlamaIndex.")
+
+                with tab_csv:
+                    # Display CSV statistical summary
+                    st.text(agent.last_csv_context)
+                    st.caption("✅ Static context from Pandas DataFrames.")
+
+        # === Slide Generation Section ===
+        st.markdown("---")
+        col_btn, col_link = st.columns([1, 3])
+        with col_btn:
+            if st.button("📊 Export to Slides"):
+                with st.spinner("Generating Google Slide Deck..."):
+                    try:
+                        # 1. Initialize generator
+                        slider = SlideGenerator()
+                        timestamp = time.strftime("%Y-%m-%d %H:%M")
+
+                        # 2. Create a slide
+                        deck_title = f"EV Factory Incident Report - {timestamp}"
+                        pid, url = slider.create_presentation(deck_title)
+
+                        # 3. Add a new content page (using what the Agent just said)
+                        #    Treat the Agent's response as Bullet points.
+                        slider.add_summary_slide(pid, f"Analysis summary", st.session_state.last_response_content)
+
+                        st.success("Done!")
+                        st.session_state['slide_url'] = url # Store it to avoid it disappearing during reorganization
+
+                    except Exception as e:
+                        st.error(f"Failed to generate slides: {e}")
+                        st.info("Did you add 'service_account.json' to the root folder?")
+
+        with col_link:
+            if 'slide_url' in st.session_state:
+                st.markdown(f"👉 **[Click to Open Google Slides]({st.session_state['slide_url']})**")
 
 # --- TAB 2: Live Dashboard (Automated Visualization) ---
 with tab2:

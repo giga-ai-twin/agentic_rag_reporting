@@ -17,6 +17,7 @@ logs/
 *.sublime-project
 *.sublime-workspace
 *.code-workspace
+
 # Python virtual environments
 venv/
 env/
@@ -25,3 +26,11 @@ env/
 env/.bak/
 venv.bak/
 
+# Service account credentials
+service_account.json
+local_service_account.json
+token.json
+
+# Testing code snippets
+check_key.py
+slide_test.py
