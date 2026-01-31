@@ -162,6 +162,23 @@ with tab1:
                         # Save full response to history
                         st.session_state.messages.append({"role": "assistant", "content": full_response})
 
+                        # Source viewer for debugging (optional)
+                        with st.expander("🔍 View Retrieved Context (Debug)"):
+                            tab_log, tab_csv = st.tabs(["📄 RAG Logs (Unstructured)", "📊 CSV Stats (Structured)"])
+
+                            with tab_log:
+                                # 顯示 Agent 剛剛抓到的 Log 片段
+                                st.code(agent.last_log_context, language="text")
+                                if "No logs available" in agent.last_log_context:
+                                    st.caption("⚠️ No relevant logs found for this query.")
+                                else:
+                                    st.caption("✅ Dynamic content retrieved from LlamaIndex.")
+
+                            with tab_csv:
+                                # 顯示 CSV 統計摘要
+                                st.text(agent.last_csv_context)
+                                st.caption("✅ Static context from Pandas DataFrames.")
+
                 except Exception as e:
                     st.error(f"Error generating response: {e}")
 
