@@ -30,6 +30,7 @@ venv.bak/
 service_account.json
 local_service_account.json
 token.json
+feedback_log.json
 
 # Testing code snippets
 check_key.py

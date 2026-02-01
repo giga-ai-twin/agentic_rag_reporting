@@ -3,31 +3,30 @@ import pandas as pd
 import plotly.express as px
 import time
 import random
-from rag_agent import EVSmartFactoryAgent # Import our custom agent class
-from slide_generator import SlideGenerator # For slide generation features
+import os
+import json
+from datetime import datetime
+from rag_agent import EVSmartFactoryAgent
+from slide_generator import SlideGenerator
+from feedback_manager import FeedbackManager
 
 # === Page Configuration ===
 st.set_page_config(
     page_title="AI-based Analytics Dashboard",
     page_icon="🏭",
-    layout="wide", # Use wide layout for better dashboard visualization
+    layout="wide",
     initial_sidebar_state="expanded"
 )
 
-# === CSS Styling (Global & Component Specific) ===
+# === CSS Styling ===
 st.markdown("""
 <style>
-    /* Style for metric cards to give a tech-dashboard look */
     .stMetric {
         background-color: #0E1117;
         padding: 15px;
         border-radius: 10px;
         border: 1px solid #303030;
     }
-
-    /* [CSS Hack] Center the chat input and fix it to the bottom.
-       By default, st.chat_input is full-width. This overrides it to be 60% width and centered.
-       The !important flag is necessary to override Streamlit's default shadow DOM styles. */
     div[data-testid="stChatInput"] {
         width: 80% !important;
         margin: auto !important;
@@ -37,93 +36,97 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# === Custom Avatar Icons (SVG Data URIs) ===
-# Icon for user: Pinkish (#FF4B8B) background
+# === Custom Avatars ===
 USER_AVATAR = "https://api.dicebear.com/9.x/personas/svg?seed=Liam"
-
-
-# Icon for bot: Tech Green (#00CC96) background
 BOT_AVATAR = "https://api.dicebear.com/9.x/bottts-neutral/svg?seed=Kingston"
 
-# === 1. Initialize Agent (Cached for Performance) ===
+# === 1. Initialize Agent ===
 @st.cache_resource
 def load_agent():
-    """
-    Initializes and caches the EVSmartFactoryAgent instance.
-    This prevents reloading the model and data on every interaction (button click/input).
-    """
     return EVSmartFactoryAgent()
+
+@st.cache_resource
+def load_feedback_manager():
+    return FeedbackManager()
 
 try:
     agent = load_agent()
+    feedback_manager = load_feedback_manager()
 except Exception as e:
     st.error(f"Failed to load agent: {e}. Please check your API Key configuration.")
     st.stop()
 
-# === 2. Sidebar: Data Preview ===
+# === 2. Sidebar ===
 with st.sidebar:
     st.title("🏭 Factory Data Hub")
     st.markdown("---")
 
-    # Display dataset information
+    # Data preview
     st.subheader("Data Sources")
     for name, df in agent.dfs.items():
         with st.expander(f"{name} ({len(df)} rows)"):
             st.dataframe(df.head(5))
 
     st.markdown("---")
-    st.info("💡 **Pro Tip:** This dashboard connects to live CSV data. The AI Agent has full access to these datasets for RAG analysis.")
 
-# === 3. Main Dashboard Interface ===
+    # Admin Area to view Feedback
+    with st.expander("🔐 Admin: View Feedback"):
+        feedback_data = feedback_manager.get_all_feedback()
+        if feedback_data:
+            st.dataframe(pd.DataFrame(feedback_data))
+            if st.button("Clear Feedback Log"):
+                feedback_manager.clear_log()
+                st.rerun()
+        else:
+            st.text("No feedback collected yet.")
 
+# === 3. Main Dashboard ===
 st.title("⚡ Giga's EV Factory: AI-based Analytics System")
 st.markdown("### Agentic RAG Reporting & Live Dashboard")
 
-# Tab Layout: Chat Interface vs. Visual Dashboard
 tab1, tab2 = st.tabs(["🤖 AI Analyst & Reporting (Chat)", "📊 Live Dashboard (Visuals)"])
 
-# --- TAB 1: AI Analyst (Chat Interface) ---
+# --- TAB 1: AI Analyst ---
 with tab1:
-    # Use columns to center the chat history view (1:3:1 ratio)
-    # The chat input is handled separately by the CSS above to ensure it stays fixed at the bottom.
     col_left, col_center, col_right = st.columns([1, 7, 1])
 
     with col_center:
-        # Initialize chat history in session state
         if "messages" not in st.session_state:
             st.session_state.messages = []
 
-        # Initialize state for last response details (to survive reruns)
+        # State variables for persistence
+        if "last_query" not in st.session_state:
+            st.session_state.last_query = None
         if "last_response_content" not in st.session_state:
             st.session_state.last_response_content = None
+        if "last_plan" not in st.session_state:
+            st.session_state.last_plan = None
         if "last_log_context" not in st.session_state:
             st.session_state.last_log_context = None
         if "last_csv_context" not in st.session_state:
             st.session_state.last_csv_context = None
+        # Feedback state to prevent double voting
+        if "feedback_given" not in st.session_state:
+            st.session_state.feedback_given = False
 
         # Display chat history
         for message in st.session_state.messages:
-            # Select avatar based on role
             avatar_icon = USER_AVATAR if message["role"] == "user" else BOT_AVATAR
             with st.chat_message(message["role"], avatar=avatar_icon):
-                st.markdown(message["content"])
+                st.markdown(message["content"], unsafe_allow_html=True)
 
-    # Handle user input
-    # Note: st.chat_input is placed outside columns to utilize the CSS 'fixed bottom' positioning
+    # Handle User Input
     if prompt := st.chat_input("Ask about yield rates, battery issues, or production risks..."):
-
-        # 1. Display user message
         st.session_state.messages.append({"role": "user", "content": prompt})
+        st.session_state.last_query = prompt # Save query for feedback
+        st.session_state.feedback_given = False # Reset feedback status for new query
 
-        # Manually specify 'col_center' to keep the message alignment consistent
         with col_center:
             with st.chat_message("user", avatar=USER_AVATAR):
-                st.markdown(prompt)
+                st.markdown(prompt, unsafe_allow_html=True)
 
-        # 2. Display Assistant Response (with simulated reasoning animation)
         with col_center:
             with st.chat_message("assistant", avatar=BOT_AVATAR):
-                # Create a placeholder for dynamic updates (Thinking -> Streaming Response)
                 message_placeholder = st.empty()
                 full_response = ""
 
@@ -144,111 +147,115 @@ with tab1:
                     # Randomly select 3-5 steps to display
                     # This replaces st.spinner with a more "agentic" feel
                     selected_steps = random.sample(thought_steps, random.randint(3, 5))
-
                     for step in selected_steps:
-                        # Display the thinking step with italic style
                         message_placeholder.markdown(f"⚙️ *{step}*")
-                        # Add a small random delay to make it readable
                         time.sleep(random.uniform(0.5, 0.8))
 
-                    # Final transition status
                     message_placeholder.markdown("⚡ *Finalizing Insights with Gemini...*")
-
-                    # === Execution Phase: Call the API ===
+                    # Execution
                     response_stream = agent.ask(prompt)
 
-                    # === Streaming Phase: Replace thought process with real answer ===
                     if response_stream:
                         for chunk in response_stream:
-                            if chunk.text:
+                            if hasattr(chunk, 'text') and chunk.text:
                                 full_response += chunk.text
-                                # Overwrite the placeholder with the accumulating response
-                                message_placeholder.markdown(full_response + "▌")
+                                message_placeholder.markdown(full_response + "▌", unsafe_allow_html=True)
 
-                        # Final update without cursor
-                        message_placeholder.markdown(full_response)
-
-                        # Save full response to history
+                        message_placeholder.markdown(full_response, unsafe_allow_html=True)
                         st.session_state.messages.append({"role": "assistant", "content": full_response})
 
-                        # Save context to Session State so it survives button clicks
+                        # Save Context
                         st.session_state.last_response_content = full_response
+                        if hasattr(agent, 'last_plan'):
+                            st.session_state.last_plan = agent.last_plan
                         st.session_state.last_log_context = agent.last_log_context
                         st.session_state.last_csv_context = agent.last_csv_context
 
-                        # Reset slide URL on new query
+                        # Clear slide URL
                         if 'slide_url' in st.session_state:
                             del st.session_state['slide_url']
 
                 except Exception as e:
-                    st.error(f"Error generating response: {e}")
+                    st.error(f"Error: {e}")
 
+    # === Post-Response Actions Area (Debug / Feedback / Export) ===
     if st.session_state.last_response_content:
         with col_center:
             st.markdown("---")
 
-            # Source viewer for debugging (optional)
-            with st.expander("🔍 View Retrieved Context (Debug)"):
+            # Only show if feedback hasn't been given yet for this interaction
+            if not st.session_state.feedback_given:
+                st.caption("Was this response helpful?")
+                col_fb1, col_fb2, col_fb3 = st.columns([1, 1, 5])
+
+                with col_fb1:
+                    if st.button("👍 Good"):
+                        feedback_manager.save_feedback(st.session_state.last_query, st.session_state.last_response_content, "👍 Positive")
+                        st.session_state.feedback_given = True
+                        st.toast("Thanks for your feedback!", icon="✅")
+                        st.rerun()
+
+                with col_fb2:
+                    if st.button("👎 Bad"):
+                        feedback_manager.save_feedback(st.session_state.last_query, st.session_state.last_response_content, "👎 Negative")
+                        st.session_state.feedback_given = True
+                        st.toast("Thanks! We'll improve.", icon="🔧")
+                        st.rerun()
+            else:
+                st.info("✅ Feedback received. Thank you!")
+
+            # Debug Expander
+            with st.expander("🧠 View Agent Thought Process (Debug)"):
                 tab_plan, tab_log, tab_csv = st.tabs(["🧭 Planning", "📄 RAG Logs", "📊 CSV Stats"])
 
                 with tab_plan:
-                    if hasattr(agent, 'last_plan') and agent.last_plan:
-                        st.info(f"**Action:** {agent.last_plan.get('action')}")
-                        st.write(f"**Reasoning:** {agent.last_plan.get('reason')}")
+                    if st.session_state.last_plan:
+                        st.info(f"**Action:** {st.session_state.last_plan.get('action')}")
+                        st.write(f"**Reasoning:** {st.session_state.last_plan.get('reason')}")
                     else:
                         st.text("No planning data.")
 
                 with tab_log:
-                    # Displays a log snippet that the Agent just captured.
-                    st.code(agent.last_log_context, language="text")
-                    if "No logs available" in agent.last_log_context:
-                        st.caption("⚠️ No relevant logs found for this query.")
-                    else:
-                        st.caption("✅ Dynamic content retrieved from LlamaIndex.")
+                    st.code(st.session_state.last_log_context or "No logs retrieved", language="text")
 
                 with tab_csv:
-                    # Display CSV statistical summary
-                    st.text(agent.last_csv_context)
-                    st.caption("✅ Static context from Pandas DataFrames.")
+                    st.text(st.session_state.last_csv_context or "No CSV data loaded")
 
-        # === Slide Generation Section ===
-        st.markdown("---")
-        col_btn, col_link = st.columns([1, 3])
-        with col_btn:
-            if st.button("📊 Export to Slides"):
-                with st.spinner("Generating Google Slide Deck..."):
-                    try:
-                        # 1. Initialize generator
-                        slider = SlideGenerator()
-                        timestamp = time.strftime("%Y-%m-%d %H:%M")
+            # Export Button
+            st.markdown("#### Actions")
+            col_btn, col_link = st.columns([1, 3])
 
-                        # 2. Create a slide
-                        deck_title = f"EV Factory Incident Report - {timestamp}"
-                        pid, url = slider.create_presentation(deck_title)
+            with col_btn:
+                if st.button("📊 Export to Slides"):
+                    with st.spinner("Generating Google Slide Deck..."):
+                        try:
+                            slider = SlideGenerator()
+                            timestamp = time.strftime("%Y-%m-%d %H:%M")
+                            deck_title = f"EV Manufacturer Weekly Report"
+                            pid, url = slider.create_presentation(deck_title)
 
-                        # 3. Add a new content page (using what the Agent just said)
-                        #    Treat the Agent's response as Bullet points.
-                        slider.add_summary_slide(pid, f"Analysis summary", st.session_state.last_response_content)
+                            slider.add_summary_slide(
+                                pid,
+                                f"Analysis: {st.session_state.last_query}",
+                                st.session_state.last_response_content
+                            )
 
-                        st.success("Done!")
-                        st.session_state['slide_url'] = url # Store it to avoid it disappearing during reorganization
+                            st.session_state['slide_url'] = url
+                            st.success("Done!")
 
-                    except Exception as e:
-                        st.error(f"Failed to generate slides: {e}")
-                        st.info("Did you add 'service_account.json' to the root folder?")
+                        except Exception as e:
+                            st.error(f"Failed: {e}")
 
-        with col_link:
-            if 'slide_url' in st.session_state:
-                st.markdown(f"👉 **[Click to Open Google Slides]({st.session_state['slide_url']})**")
+            with col_link:
+                if 'slide_url' in st.session_state:
+                    st.markdown(f"👉 **[Click to Open Google Slides]({st.session_state['slide_url']})**")
 
-# --- TAB 2: Live Dashboard (Automated Visualization) ---
+# --- TAB 2: Live Dashboard ---
 with tab2:
     st.markdown("#### Real-time KPI Overview")
-
-    # Retrieve dataframes from the agent instance for visualization
-    df_perf = agent.dfs['Performance']
-    df_mfg = agent.dfs['Manufacturing']
-    df_issues = agent.dfs['Issues']
+    df_perf = agent.dfs.get('Performance', pd.DataFrame())
+    df_mfg = agent.dfs.get('Manufacturing', pd.DataFrame())
+    df_issues = agent.dfs.get('Issues', pd.DataFrame())
 
     # KPI Metrics Row
     col1, col2, col3, col4 = st.columns(4)
