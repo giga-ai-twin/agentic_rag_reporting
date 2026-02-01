@@ -7,6 +7,8 @@ from google_auth_oauthlib.flow import InstalledAppFlow
 from google.auth.transport.requests import Request
 import datetime
 
+from streamlit import title
+
 class SlideGenerator:
     """
     Automates the creation of Google Slides presentations.
@@ -132,64 +134,98 @@ class SlideGenerator:
         except HttpError as err:
             print(f"⚠️ [Step 1.5] Share Warning: {err}")
 
-    def add_summary_slide(self, presentation_id, slide_title, summary_text):
-        """Adds a slide with a title and a bulleted list of text."""
+    def add_summary_slide(self, presentation_id, slide_title, long_text):
+        """
+        [Smart Split] Automatically splits long text into multiple slides.
+        """
+        # 設定每頁最大字元數 (經驗值：220 字約滿版)
+        MAX_CHARS = 220
 
+        # 1. 簡單的切分演算法 (依段落切分，避免切斷句子)
+        paragraphs = long_text.split('\n')
+        chunks = []
+        current_chunk = ""
+
+        for p in paragraphs:
+            # 如果加上這一段還沒爆掉，就繼續加
+            if len(current_chunk) + len(p) < MAX_CHARS:
+                current_chunk += p + "\n"
+            else:
+                # 爆掉了，先把目前的存起來，開新的一頁
+                chunks.append(current_chunk)
+                current_chunk = p + "\n" # 新的一頁從這段開始
+
+        # 把最後剩下的也存起來
+        if current_chunk:
+            chunks.append(current_chunk)
+
+        print(f"📄 Content split into {len(chunks)} slides.")
+
+        # 2. 迴圈建立每一張投影片
+        for i, chunk in enumerate(chunks):
+            # 如果有多頁，標題自動加上 (1/3), (2/3)...
+            if len(chunks) > 1:
+                current_title = f"{slide_title} ({i+1}/{len(chunks)})"
+            else:
+                current_title = slide_title
+
+            # 呼叫底層函式建立單頁
+            self._create_single_slide(presentation_id, current_title, chunk)
+
+    def _create_single_slide(self, presentation_id, title, content):
+        """
+        Internal method to create one single slide.
+        (This contains the original logic)
+        """
         try:
+            print(f"   -> Creating slide: {title}...")
             # 1. Create a new slide
             requests = [
                 {
                     'createSlide': {
-                        'objectId': 'summary_slide_01',
+                        # 不指定 objectId，讓 Google 自動生成，避免多頁時 ID 重複衝突
                         'slideLayoutReference': {'predefinedLayout': 'TITLE_AND_BODY'}
                     }
                 }
             ]
 
-            # 2. Write title and content
             body = {'requests': requests}
             response = self.slides_service.presentations().batchUpdate(
                 presentationId=presentation_id, body=body).execute()
 
             slide_id = response['replies'][0]['createSlide']['objectId']
 
-            # 3. Get the placeholder of this page (to know where to fill in the text).
+            # 2. Get Placeholders
             slide = self.slides_service.presentations().pages().get(
                 presentationId=presentation_id, pageObjectId=slide_id).execute()
 
-            title_id = slide['pageElements'][0]['objectId']
-            body_id = slide['pageElements'][1]['objectId']
+            title_id = None
+            body_id = None
 
-            # 4. Request to insert text
-            text_requests = [
-                {
-                    'insertText': {
-                        'objectId': title_id,
-                        'text': slide_title
-                    }
-                },
-                {
-                    'insertText': {
-                        'objectId': body_id,
-                        'text': summary_text
-                    }
-                }
-            ]
+            # 尋找標題和內文的框框
+            for element in slide.get('pageElements', []):
+                if 'shape' in element and 'placeholder' in element['shape']:
+                    type_ = element['shape']['placeholder']['type']
+                    if type_ == 'TITLE':
+                        title_id = element['objectId']
+                    elif type_ == 'BODY':
+                        body_id = element['objectId']
 
-            # 5. Batch update to insert text
-            self.slides_service.presentations().batchUpdate(
-                presentationId=presentation_id,
-                body={'requests': text_requests}
-            ).execute()
+            # 3. Insert Text
+            text_requests = []
+            if title_id:
+                text_requests.append({'insertText': {'objectId': title_id, 'text': title}})
+            if body_id:
+                text_requests.append({'insertText': {'objectId': body_id, 'text': content}})
 
-            print("✅ [Step 2] Slide added successfully.")
+            if text_requests:
+                self.slides_service.presentations().batchUpdate(
+                    presentationId=presentation_id,
+                    body={'requests': text_requests}
+                ).execute()
 
-        except HttpError as err:
-            print(f"❌ [Step 2] Failed to add slide: {err}")
-            raise err
-        except KeyError as e:
-            print(f"❌ [Step 2] Failed to parse slide structure (Index Error?): {e}")
-            raise e
+        except Exception as e:
+            print(f"❌ Failed to create slide '{title}': {e}")
 
 # Test locally
 if __name__ == "__main__":

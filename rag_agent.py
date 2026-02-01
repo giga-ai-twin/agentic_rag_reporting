@@ -1,3 +1,4 @@
+from fileinput import filename
 import os
 import sys
 import time
@@ -11,12 +12,18 @@ from rich.panel import Panel
 from rich.style import Style
 from rich import print
 from log_analyzer import LogRetriever
+from planning_agent import PlanningAgent
 
 # Initialize Rich Console for UI
 console = Console()
 load_dotenv()
 
 class EVSmartFactoryAgent:
+    """
+    [Coordinator]
+    Orchestrates the workflow:
+    Planner -> LogRetriever/CSV -> Final Synthesis
+    """
     def __init__(self):
         self.api_key = os.getenv("GEMINI_API_KEY")
         if not self.api_key:
@@ -24,7 +31,6 @@ class EVSmartFactoryAgent:
             sys.exit(1)
 
         # Initialize Google GenAI Client
-        # Using the experimental flash model for low latency
         self.client = genai.Client(api_key=self.api_key)
         self.model_name = "gemini-3-flash-preview"
 
@@ -32,10 +38,15 @@ class EVSmartFactoryAgent:
         self.last_log_context = "No logs retrieved yet."
         self.last_csv_context = "No CSV context yet."
 
-        # Load Structured Data Sources
+        # Load Data Sources
         self.dfs = {}
         self.data_summary = ""
         self.full_context_csv = ""
+        self.log_context = ""
+
+        # Initialize Planning Agent
+        print("🧠 Initializing Planning Agent...")
+        self.planner = PlanningAgent()
 
         # Initialize Unstructured Data Retriever (Logs)
         print("🚀 Initializing Log Analysis Subsystem (RAG)...")
@@ -60,51 +71,90 @@ class EVSmartFactoryAgent:
 
         console.print("[dim]Loading datasets...[/dim]")
         for name, path in self.data_files.items():
+            # path = os.path.join("data", path.split("/data/")[-1])  # Ensure path is relative to data directory
+            if os.path.exists(path):
+                self.dfs[name] = pd.read_csv(path)
+
             if not os.path.exists(path):
                 console.print(f"[bold red]Error:[/bold red] File not found: {path}")
                 console.print("Did you run 'python generate_data.py' first?")
                 sys.exit(1)
 
-            df = pd.read_csv(path)
-            self.dfs[name] = df
+    def get_structured_context(self) -> str:
+            if not self.dfs: return "No CSV Data."
+            self.data_summary = "--- STRUCTURED DATA (Statistics) ---\n"
+            self.full_context_csv = "" # Reset
+            for name, df in self.dfs.items():
+                # Build Schema Summary
+                self.data_summary += f"\nDataset: {name}\nColumns: {', '.join(df.columns)}\nPreview:\n{df.head(3).to_markdown(index=False)}\n"
+                # Context Injection
+                self.full_context_csv += f"\n=== {name} Data Table ===\n{df.to_csv(index=False)}\n"
 
-            # Build Schema Summary
-            self.data_summary += f"\nDataset: {name}\nColumns: {', '.join(df.columns)}\nPreview:\n{df.head(3).to_markdown(index=False)}\n"
-
-            # Context Injection
-            self.full_context_csv += f"\n=== {name} Data Table ===\n{df.to_csv(index=False)}\n"
-            console.print(f"[green]✔ Loaded {name}: {len(df)} rows[/green]")
+            console.print(f"[green]✔ Loaded {len(self.dfs)} datasets[/green]")
 
     def ask(self, question):
         """
         The main entry point for the Agent.
-        1. Retrieves relevant logs (RAG) if available.
-        2. Prepares structured data context (CSV).
-        3. Sends everything to Gemini for reasoning.
+        1. Plans the query using Planning Agent.
+        2. Retrieves relevant logs (RAG) if available.
+        3. Prepares structured data context (CSV).
+        4. Sends everything to Gemini for reasoning.
         """
 
-        # Step 1: Get Context from CSVs (The original logic)
-        self.last_csv_context = self.full_context_csv # Store last CSV context for debugging
+        # === Phase 1: Planning (Delegated to Planning Agent) ===
+        plan = self.planner.plan_query(question)
+        self.last_plan = plan # Save for UI
 
-        # Step 2: Get Context from Logs (RAG Retrieval)
-        log_context = LogRetriever(log_dir="data/logs")
-        if self.log_retriever:
-            print(f"🔍 RAG Agent is searching logs for: {question}")
-            log_context = self.log_retriever.get_relevant_logs(question)
-            print(f"📄 [DEBUG] Retrieved Log Content: {log_context[:200]}...")
-        else:
-            log_context = "Log analysis subsystem is unavailable."
+        action = plan.get("action", "BOTH")
+        reason = plan.get("reason", "This query is not related to factory analytics.")
 
-        self.last_log_context = log_context # Store last log retrieval for debugging
+        # === [Planning Guardrail] ===
+        if action == "OUT_OF_SCOPE":
+            refusal_text = (
+                f"🛡️ **Out of Scope**\n\n"
+                f"**Reason:** {reason}\n\n"
+                f"I am a specialized **EV Factory AI Assistant**. "
+                f"I can only help you with:\n"
+                f"- 📊 Production Statistics (Yield, SoH)\n"
+                f"- 📝 Error Log Analysis (E-301, V2.1.0)\n"
+                f"- 🏭 Manufacturing Quality Issues"
+            )
 
-        # Step 3: Construct the Hybrid System Prompt
-        # We combine insights from both CSV (Trends) and Logs (Root Causes)
+            # Create a generator that conforms to the Streamlit stream format.
+            # This way, the `for chunk in response_stream` loop in `app.py` will also work correctly.
+            class GenericStreamResponse:
+                def __init__(self, text):
+                    self.text = text
+
+            # Use yield to postback to simulate a streaming effect.
+            yield GenericStreamResponse(refusal_text)
+            return
+
+        # === Phase 2: Execution (Retrieval) ===
+        self.csv_context = ""
+        self.log_context = ""
+
+        if action in ["CSV_ONLY", "BOTH"]:
+            self.get_structured_context()
+
+        if action in ["LOGS_ONLY", "BOTH"]:
+            if self.log_retriever:
+                print(f"🔍 RAG Agent is searching logs for: {question}")
+                self.log_context = self.log_retriever.get_relevant_logs(question)
+                print(f"📄 [DEBUG] Retrieved Log Content: {self.log_context[:200]}...")
+            else:
+                self.log_context = "Log analysis subsystem is unavailable."
+
+        self.last_csv_context = self.full_context_csv if self.full_context_csv else "Skipped by Planner"
+        self.last_log_context = self.log_context if self.log_context else "Skipped by Planner"
+
+        # === Phase 3: Synthesis (Final Answer) ===
+        # Construct the Hybrid System Prompt
         self.system_instruction = f"""
         You are the Chief Engineer and Data Strategist of an EV Smart Factory.
-        You have access to 3 interconnected datasets:
-        1. Manufacturing: Production logs (Labor, Status, Line ID).
-        2. Performance: Vehicle telemetry (Battery SoH, Firmware Version, Sensor Score).
-        3. Issues: Quality tickets and defects.
+
+        PLANNING DECISION: {action}
+        REASONING: {reason}
 
         Data Schema Preview:
         {self.data_summary}
@@ -118,28 +168,20 @@ class EVSmartFactoryAgent:
         {self.full_context_csv}
 
         Additionally, you have access to recent production logs from the factory's End-of-Line test station.
-        {log_context}
+        {self.log_context}
 
         --- INSTRUCTIONS ---
+        - **Word Limit:** Keep your answer within 300 words.
         - **General Trends:** If the user asks about stats (e.g., "Yield rate"), rely on CSV data.
+        - **Issue Severity:** If the user asks about failures or errors, use green/red highlighting to indicate severity.
         - **Root Causes:** If the user asks about specific failures (e.g., "Why did v2.1.0 fail?"), rely on the LOG entries.
         - **Correlation:** Try to link CSV anomalies (e.g., Low SOH) with Log errors (e.g., Voltage drift).
         - **Actionable Advice:** When identifying a log error, cite the specific Error Code and the Assigned Team.
 
         """
 
-        # --- MODEL UPDATE: Gemini 3 Flash Preview ---
-        console.print("[dim]Initializing Gemini 3 Flash Preview model...[/dim]")
-        self.chat = self.client.chats.create(
-            model=self.model_name,
-            config=types.GenerateContentConfig(
-                system_instruction=self.system_instruction,
-                temperature=0.7,
-                top_p=0.95,
-                top_k=64,
-                max_output_tokens=8192,
-            )
-        )
+        # --- [Gemini Model Reasoning Optimization] Content generation parameters ---
+        console.print(f"[dim]Initializing {self.model_name} model...[/dim]")
 
         """
         Sends a message to the model with Exponential Backoff Retry logic.
@@ -149,18 +191,45 @@ class EVSmartFactoryAgent:
 
         for attempt in range(max_retries):
             try:
-                response_stream = self.chat.send_message_stream(question)
-                return response_stream
+                # The new API uses generate_content with the stream=True flag
+                # response_stream = model.generate_content(question, stream=True)
+                # return response_stream
+
+                response = self.client.models.generate_content_stream(
+                    model=self.model_name,
+                    contents=self.system_instruction,
+                    config=types.GenerateContentConfig(
+                        temperature=0.7,
+                        top_p=0.95,
+                        top_k=64,
+                        max_output_tokens=2048
+                    )
+                )
+                for chunk in response:
+                    yield chunk
+                return
 
             except Exception as e:
-                error_msg = str(e).lower()
-                if "429" in error_msg or "quota" in error_msg or "resource_exhausted" in error_msg:
-                    console.print(f"\n[yellow]API Quota Limit hit. Retrying in {wait_time}s... (Attempt {attempt + 1}/{max_retries})[/yellow]")
+                # error_msg = str(e).lower()
+                # if "429" in error_msg or "quota" in error_msg or "resource_exhausted" in error_msg:
+                #     console.print(f"\n[yellow]API Quota Limit hit. Retrying in {wait_time}s... (Attempt {attempt + 1}/{max_retries})[/yellow]")
+                #     time.sleep(wait_time)
+                #     wait_time *= 2
+                # else:
+                #     console.print(f"[bold red]API Error:[/bold red] {e}")
+                #     return None
+
+                print(f"Error generating response: {e}")
+
+                if attempt < max_retries - 1:
                     time.sleep(wait_time)
                     wait_time *= 2
+                    continue
                 else:
-                    console.print(f"[bold red]API Error:[/bold red] {e}")
-                    return None
+                    class ErrorChunk:
+                        text = f"\n⚠️ Error: {e}"
+                    yield ErrorChunk()
+                return
 
         console.print("[bold red]Failed after multiple retries. Please check your API quota plan.[/bold red]")
         return None
@@ -241,7 +310,7 @@ def main():
 
             # === Stream Output ===
             if response_stream and first_chunk:
-                console.print("\n[bold purple]AI Assistant >[/bold purple]")
+                console.print("\n[bold dark_slate_gray2]Reporting AI Agent >[/bold dark_slate_gray2]")
 
                 # A. Print the first chunk
                 if first_chunk.text:

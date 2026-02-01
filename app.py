@@ -189,7 +189,14 @@ with tab1:
 
             # Source viewer for debugging (optional)
             with st.expander("🔍 View Retrieved Context (Debug)"):
-                tab_log, tab_csv = st.tabs(["📄 RAG Logs (Unstructured)", "📊 CSV Stats (Structured)"])
+                tab_plan, tab_log, tab_csv = st.tabs(["🧭 Planning", "📄 RAG Logs", "📊 CSV Stats"])
+
+                with tab_plan:
+                    if hasattr(agent, 'last_plan') and agent.last_plan:
+                        st.info(f"**Action:** {agent.last_plan.get('action')}")
+                        st.write(f"**Reasoning:** {agent.last_plan.get('reason')}")
+                    else:
+                        st.text("No planning data.")
 
                 with tab_log:
                     # Displays a log snippet that the Agent just captured.
