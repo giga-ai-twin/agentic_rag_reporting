@@ -173,7 +173,7 @@ class EVSmartFactoryAgent:
         --- INSTRUCTIONS ---
         - **Word Limit:** Keep your answer within 300 words.
         - **General Trends:** If the user asks about stats (e.g., "Yield rate"), rely on CSV data.
-        - **Issue Severity:** If the user asks about failures or errors, use green/red highlighting to indicate severity.
+        - **Issue Severity:** If a user asks about a malfunction or error, please use red, yellow, and green light circles to indicate the severity.
         - **Root Causes:** If the user asks about specific failures (e.g., "Why did v2.1.0 fail?"), rely on the LOG entries.
         - **Correlation:** Try to link CSV anomalies (e.g., Low SOH) with Log errors (e.g., Voltage drift).
         - **Actionable Advice:** When identifying a log error, cite the specific Error Code and the Assigned Team.

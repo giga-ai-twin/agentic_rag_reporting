@@ -19,7 +19,7 @@ class LogRetriever:
 
         # 1. Configure Settings to use Gemini
         # We use Gemini for both embedding (vectorizing text) and LLM tasks within LlamaIndex
-        print("⚙️ Configuring LlamaIndex to use Google Gemini...")
+        print(f"⚙️ Configuring LlamaIndex to use Google Gemini...")
         try:
             Settings.llm = Gemini(model="gemini-3-flash-preview", api_key=api_key)
             Settings.embed_model = GeminiEmbedding(model_name="models/text-embedding-004", api_key=api_key)
