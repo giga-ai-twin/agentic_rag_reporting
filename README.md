@@ -42,10 +42,23 @@ This system addresses key bottlenecks in modern manufacturing operations:
 
 ---
 
-## 📺 System Demo
+## 📺 System Demos
 
-![Dashboard Screenshot](https://via.placeholder.com/800x450?text=Insert+Dashboard+Screenshot+Here)
-*(Place your Streamlit dashboard screenshot or a GIF of the thinking process here)*
+### 1. 🖥️ Web Dashboard (Streamlit)
+Experience the full interactive dashboard, real-time analytics, and automated slide generation.
+
+**[🎥 Watch the full Web UI Demo on YouTube](https://youtu.be/oGKPQ9gEh0M)**
+
+![Web_Demo_Agentic_RAG_Reporting](https://github.com/user-attachments/assets/904819f1-1015-4925-b92d-039acc713d09)
+
+---
+
+### 2. 👨‍💻 CLI Agent (Terminal)
+See the "Agentic Workflow" in action via the terminal, featuring real-time reasoning and planning.
+
+**[🎥 Watch the full CLI Demo on YouTube](https://youtu.be/RwhD2jPkRps)**
+
+![CLI_Demo_Agentic_RAG_Reporting](https://github.com/user-attachments/assets/8b5007c1-d425-41a3-b50b-e2dc05111508)
 
 ---
 
